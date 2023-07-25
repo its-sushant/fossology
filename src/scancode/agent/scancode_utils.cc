@@ -167,6 +167,12 @@ return saveLicenseMatchesToDatabase(
            databaseHandler) &&
        saveOtherMatchesToDatabase(
            state, scancodeData["scancode_author"], file.getId(),
+           databaseHandler) &&
+       saveOtherMatchesToDatabase(
+           state, scancodeData["scancode_email"], file.getId(),
+           databaseHandler) &&
+       saveOtherMatchesToDatabase(
+           state, scancodeData["scancode_url"], file.getId(),
            databaseHandler);
 }
 

@@ -58,3 +58,8 @@ install(FILES
     scancode_template.html
     DESTINATION ${FO_MODDIR}/${PROJECT_NAME}/agent
     COMPONENT scancode)
+
+install(FILES
+    scansinglefile.py
+    DESTINATION ${FO_MODDIR}/${PROJECT_NAME}/agent
+    COMPONENT scancode)

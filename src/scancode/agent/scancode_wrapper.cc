@@ -73,13 +73,8 @@ string scanFileWithScancode(const State &state, const fo::File &file) {
 
   string command =
       "PYTHONPATH='/home/" + projectUser + "/pythondeps/' " +
-      "SCANCODE_CACHE=" + cacheDir + "/scancode " + // Use fossology's cache
-      "/home/" + projectUser + "/pythondeps/bin/scancode -" +
-      state.getCliOptions() +
-      " --custom-output - --custom-template scancode_template.html " +
-      file.getFileName() + " --quiet " +
-      ((state.getCliOptions().find('l') != string::npos) ? " --license-text --license-score " +
-      to_string(MINSCORE): "");
+      "python3 scansinglefile.py -" + state.getCliOptions() +
+      " " + file.getFileName();
   string result;
 
   if (!(in = popen(command.c_str(), "r"))) {
@@ -179,6 +174,28 @@ map<string, vector<Match>> extractDataFromScancodeResult(const string& scancodeR
         unsigned length = holdername.length();
         string type="scancode_author";
         result["scancode_author"].push_back(Match(holdername,type,start_pointer,length));
+    }
+
+    Json::Value emailarrays = scancodevalue["emails"];
+    for (auto oneresult : emailarrays) {
+        string emailname = oneresult["value"].asString();
+        unsigned long start_line=oneresult["start"].asUInt();
+        string temp_text= emailname.substr(0,emailname.find("\n"));
+        unsigned start_pointer = getFilePointer(filename, start_line, temp_text);
+        unsigned length = emailname.length();
+        string type="scancode_email";
+        result["scancode_email"].push_back(Match(emailname,type,start_pointer,length));
+    }
+
+    Json::Value urlarrays = scancodevalue["urls"];
+    for (auto oneresult : urlarrays) {
+        string urlname = oneresult["value"].asString();
+        unsigned long start_line=oneresult["start"].asUInt();
+        string temp_text= urlname.substr(0,urlname.find("\n"));
+        unsigned start_pointer = getFilePointer(filename, start_line, temp_text);
+        unsigned length = urlname.length();
+        string type="scancode_url";
+        result["scancode_url"].push_back(Match(urlname,type,start_pointer,length));
     }
   } else {
     LOG_FATAL("JSON parsing failed %s \n", errors.c_str());
