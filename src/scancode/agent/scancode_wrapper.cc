@@ -71,15 +71,19 @@ string scanFileWithScancode(const State &state, const fo::File &file) {
   string cacheDir = fo_config_get(sysconfig, "DIRECTORIES", "CACHEDIR",
     NULL);
 
+  // string command =
+  //     "PYTHONPATH='/home/" + projectUser + "/pythondeps/' " +
+  //     "SCANCODE_CACHE=" + cacheDir + "/scancode " + // Use fossology's cache
+  //     "/home/" + projectUser + "/pythondeps/bin/scancode -" +
+  //     state.getCliOptions() +
+  //     " --custom-output - --custom-template scancode_template.html " +
+  //     file.getFileName() + " --quiet " +
+  //     ((state.getCliOptions().find('l') != string::npos) ? " --license-text --license-score " +
+  //     to_string(MINSCORE): "");
   string command =
       "PYTHONPATH='/home/" + projectUser + "/pythondeps/' " +
-      "SCANCODE_CACHE=" + cacheDir + "/scancode " + // Use fossology's cache
-      "/home/" + projectUser + "/pythondeps/bin/scancode -" +
-      state.getCliOptions() +
-      " --custom-output - --custom-template scancode_template.html " +
-      file.getFileName() + " --quiet " +
-      ((state.getCliOptions().find('l') != string::npos) ? " --license-text --license-score " +
-      to_string(MINSCORE): "");
+      "python3 scansinglefile.py -" + state.getCliOptions() +
+      " " + file.getFileName();
   string result;
 
   if (!(in = popen(command.c_str(), "r"))) {
