@@ -4,6 +4,96 @@
 -->
 # Changelog of FOSSology
 
+### 4.3.0 (Jun 22nd 2023)
+
+This release adds important corrections to
+[4.3.0-rc2](https://github.com/fossology/fossology/releases/tag/4.3.0-rc2)
+
+The release 4.3.0 introduces a number of corrections to
+[4.2.1](https://github.com/fossology/fossology/releases/tag/4.2.1)
+and major changes to FOSSology, including:
+
+* Integration with [ScanOSS](https://scanoss.com/)
+* Add new field SPDX ID for licenses, making FOSSology reports more SPDX
+  compliant.
+  * Same time, fix SPDX reports and update to v2.3
+  * Rename deprecated licenses like GPL-2.0+
+* Update build system to CMake from GNU Make.
+* New option to export and import FOSSology decisions.
+* Several security fixes.
+* New list to define predefined acknowledgements for easy reuse.
+* Consider folder level and package level bulk.
+* Drop Ubuntu Bionic support.
+
+#### Credits to contributors for 4.3.0
+
+From the GIT commit history, we have the following contributors since
+[4.2.1](https://github.com/fossology/fossology/releases/tag/4.2.1):
+
+```
+> Avinal Kumar <avinal.xlvii@gmail.com>
+> dushimsam <dushsam@gmail.com>
+> Gaurav Mishra <mishra.gaurav@siemens.com>
+> hero2323 <abdelrahmanjamal5565@gmail.com>
+> Krishna Mahato <krishhtrishh9304@gmail.com>
+> mayank-pathakk <mayank234pathak@gmail.com>
+> Sanjay Krishna S R <sanjaykrishna1203@gmail.com>
+> scanoss-qg <quique.goni@scanoss.com>
+> Shaheem Azmal M MD <shaheem.azmal@siemens.com>
+> Simran Nigam <nigamsimran14@gmail.com>
+> soham4abc <sohambanerjee4abc@hotmail.com>
+> srideep-banerjee <banerjee.srideep@gmail.com>
+> Toussaint Nicolas <nicolas1.toussaint@orange.com>
+```
+
+#### Features
+
+* `83191c8e9` feat(thirdpartyLicenses): update third notices
+
+#### Corrections
+
+* `753fbbbc9` fix(scanoss): check json-c version for buster
+
+### 4.3.0-rc2 (Jun 13th 2023)
+
+This release adds important corrections to
+[4.3.0-rc1](https://github.com/fossology/fossology/releases/tag/4.3.0-rc1)
+
+The release 4.3.0-rc2 introduces following major corrections to
+[4.3.0-rc1](https://github.com/fossology/fossology/releases/tag/4.3.0-rc1):
+
+* Consider folder level and package level bulk.
+* Drop Ubuntu Bionic support.
+* Replace two single quotes to one in escaped string.
+
+#### Credits to contributors for 4.3.0-rc2
+
+From the GIT commit history, we have the following contributors since
+[4.3.0-rc1](https://github.com/fossology/fossology/releases/tag/4.3.0-rc1):
+
+```
+> Gaurav Mishra <mishra.gaurav@siemens.com>
+> hero2323 <abdelrahmanjamal5565@gmail.com>
+> Shaheem Azmal M MD <shaheem.azmal@siemens.com>
+```
+
+#### Corrections
+
+* `c9abbe0c7` fix(user-edit.php): Fixed editing emails allows for duplicate emails for multiple users.
+* `c9fb01d93` fix(user-add.php): Fixed email can be blank but required.
+* `a3f7d469a` fix(bulkReuse): consider folder level and package level bulk
+* `3a782ceb0` fix(composer.json.in): update slim/psr7 in .in file
+* `97ef64c67` fix(warnings): fix unified report warnings
+* `0d175334d` fix(conf): replace two single quotes to one in escaped string
+* `a3a022c6b` fix(cd): fix release build action
+
+#### Infrastructure
+
+* `c50da8045` chore(scanoss): remove jq
+* `6c393d4e1` chore(composer): update min php to 7.3.31
+* `2cc1b4249` chore(os): drop Ubuntu Bionic support
+* `b8fbcb4e9` chore(deps): bump slim/psr7 from 1.4 to 1.4.1 in /src
+
 ### 4.3.0-rc1 (May 9th 2023)
 
 This release adds important corrections to

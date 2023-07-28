@@ -3,10 +3,11 @@
  SPDX-FileCopyrightText: © 2018, 2020 Siemens AG
  Author: Gaurav Mishra <mishra.gaurav@siemens.com>,
  Soham Banerjee <sohambanerjee4abc@hotmail.com>
- SPDX-FileCopyrightText: © 2022 Samuel Dushimimana <dushsam100@gmail.com>
+ SPDX-FileCopyrightText: © 2022, 2023 Samuel Dushimimana <dushsam100@gmail.com>
 
  SPDX-License-Identifier: GPL-2.0-only
 */
+
 /**
  * @file
  * @brief Controller for upload queries
@@ -16,14 +17,20 @@ namespace Fossology\UI\Api\Controllers;
 
 use Fossology\DelAgent\UI\DeleteMessages;
 use Fossology\Lib\Auth\Auth;
+use Fossology\Lib\Dao\AgentDao;
+use Fossology\Lib\Dao\LicenseDao;
 use Fossology\Lib\Data\AgentRef;
 use Fossology\Lib\Data\UploadStatus;
 use Fossology\Lib\Proxy\ScanJobProxy;
 use Fossology\Lib\Proxy\UploadBrowseProxy;
+use Fossology\Lib\Proxy\UploadTreeProxy;
 use Fossology\UI\Api\Helper\ResponseHelper;
 use Fossology\UI\Api\Helper\UploadHelper;
 use Fossology\UI\Api\Models\Info;
 use Fossology\UI\Api\Models\InfoType;
+use Fossology\UI\Api\Models\License;
+use Fossology\UI\Api\Models\Obligation;
+use Fossology\UI\Api\Models\ScannedLicense;
 use Psr\Http\Message\ServerRequestInterface;
 use Slim\Psr7\Factory\StreamFactory;
 
@@ -94,11 +101,23 @@ class UploadController extends RestController
    */
   const VALID_STATUS = ["open", "inprogress", "closed", "rejected"];
 
+  /**
+   * Agent names list
+   */
+  private $agentNames = AgentRef::AGENT_LIST;
+
+  /**
+   * @var AgentDao $agentDao
+   * Agent Dao object
+   */
+  private $agentDao;
+
   public function __construct($container)
   {
     parent::__construct($container);
     $groupId = $this->restHelper->getGroupId();
     $dbManager = $this->dbHelper->getDbManager();
+    $this->agentDao = $this->container->get('dao.agent');
     $uploadBrowseProxy = new UploadBrowseProxy($groupId, 0, $dbManager, false);
     $uploadBrowseProxy->sanity();
   }
@@ -296,17 +315,40 @@ class UploadController extends RestController
   public function getUploadSummary($request, $response, $args)
   {
     $id = intval($args['id']);
+    $query = $request->getQueryParams();
+    $selectedAgentId = $query['agentId'];
+    $agentDao = $this->container->get('dao.agent');
     $upload = $this->uploadAccessible($this->restHelper->getGroupId(), $id);
     if ($upload !== true) {
       return $response->withJson($upload->getArray(), $upload->getCode());
+    } else if ($selectedAgentId !== null && !$this->dbHelper->doesIdExist("agent", "agent_pk", $selectedAgentId)) {
+      $error = new Info(404, "Agent does not exist", InfoType::ERROR);
+      return $response->withJson($error->getArray(), $error->getCode());
     }
     $temp = $this->isAdj2nestDone($id, $response);
     if ($temp !== true) {
       return $temp;
     }
     $uploadHelper = new UploadHelper();
-    $uploadSummary = $uploadHelper->generateUploadSummary($id,
-      $this->restHelper->getGroupId());
+    $uploadSummary = $uploadHelper->generateUploadSummary($id, $this->restHelper->getGroupId());
+    $browseLicense = $this->restHelper->getPlugin('license');
+    $uploadDao = $this->restHelper->getUploadDao();
+    $uploadTreeTableName = $uploadDao->getUploadtreeTableName($id);
+    $itemTreeBounds = $uploadDao->getParentItemBounds($id, $uploadTreeTableName);
+    $scanJobProxy = new ScanJobProxy($agentDao, $id);
+    $scannerAgents = array_keys(AgentRef::AGENT_LIST);
+    $scanJobProxy->createAgentStatus($scannerAgents);
+    $selectedAgentIds = empty($selectedAgentId) ? $scanJobProxy->getLatestSuccessfulAgentIds() : $selectedAgentId;
+    $res = $browseLicense->createLicenseHistogram("", "", $itemTreeBounds, $selectedAgentIds, $this->restHelper->getGroupId());
+    $uploadSummary->setUniqueConcludedLicenses($res['editedUniqueLicenseCount']);
+    $uploadSummary->setTotalConcludedLicenses($res['editedLicenseCount']);
+    $uploadSummary->setTotalLicenses($res['scannerLicenseCount']);
+    $uploadSummary->setUniqueLicenses($res['uniqueLicenseCount']);
+    $uploadSummary->setConcludedNoLicenseFoundCount($res['editedNoLicenseFoundCount']);
+    $uploadSummary->setFileCount($res['fileCount']);
+    $uploadSummary->setNoScannerLicenseFoundCount($res['noScannerLicenseFoundCount']);
+    $uploadSummary->setScannerUniqueLicenseCount($res['scannerUniqueLicenseCount']);
+
     return $response->withJson($uploadSummary->getArray(), 200);
   }
 
@@ -488,6 +530,8 @@ class UploadController extends RestController
   {
     $id = intval($args['id']);
     $query = $request->getQueryParams();
+    $page = $request->getHeaderLine("page");
+    $limit = $request->getHeaderLine("limit");
 
     if (! array_key_exists(self::AGENT_PARAM, $query)) {
       $error = new Info(400, "'agent' parameter missing from query.",
@@ -528,9 +572,33 @@ class UploadController extends RestController
       return $agentScheduled;
     }
 
+    /*
+     * check if page && limit are numeric, if existing
+     */
+    if ((! ($page==='') && (! is_numeric($page) || $page < 1)) ||
+      (! ($limit==='') && (! is_numeric($limit) || $limit < 1))) {
+      $returnVal = new Info(400,
+        "Bad Request. page and limit need to be positive integers!",
+        InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    // set page to 1 by default
+    if (empty($page)) {
+      $page = 1;
+    }
+
+    // set limit to 50 by default and max as 1000
+    if (empty($limit)) {
+      $limit = 50;
+    } else if ($limit > 1000) {
+      $limit = 1000;
+    }
+
     $uploadHelper = new UploadHelper();
-    $licenseList = $uploadHelper->getUploadLicenseList($id, $agents, $containers, $license, $copyright);
-    return $response->withJson($licenseList, 200);
+    list($licenseList, $count) = $uploadHelper->getUploadLicenseList($id, $agents, $containers, $license, $copyright, $page-1, $limit);
+    $totalPages = intval(ceil($count / $limit));
+    return $response->withHeader("X-Total-Pages", $totalPages)->withJson($licenseList, 200);
   }
 
    /**
@@ -641,7 +709,7 @@ class UploadController extends RestController
   /**
    * Check if upload is accessible
    * @param integer $groupId Group ID
-   * @param integer $id      Upload ID
+   * @param integer $id Upload ID
    * @return Fossology::UI::Api::Models::Info|boolean Info object on failure or
    *         true otherwise
    */
@@ -836,5 +904,393 @@ class UploadController extends RestController
     $res["publicPerm"] = $publicPerm;
     $res["permGroups"] = $finalPermGroups;
     return $response->withJson($res, 200);
+  }
+  /**
+   * Get the main licenses for the upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getMainLicenses($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    $clearingDao = $this->container->get('dao.clearing');
+    $licenseIds = $clearingDao->getMainLicenseIds($uploadId, $this->restHelper->getGroupId());
+    $licenseDao = $this->container->get('dao.license');
+    $licenses = array();
+
+    foreach ($licenseIds as $key => $value) {
+      $licenseId = intval($value);
+      $obligations = $licenseDao->getLicenseObligations([$licenseId],
+        false);
+      $obligations = array_merge($obligations,
+        $licenseDao->getLicenseObligations([$licenseId], true));
+      $obligationList = [];
+      foreach ($obligations as $obligation) {
+        $obligationList[] = new Obligation(
+          $obligation['ob_pk'],
+          $obligation['ob_topic'],
+          $obligation['ob_type'],
+          $obligation['ob_text'],
+          $obligation['ob_classification'],
+          $obligation['ob_comment']
+        );
+      }
+      $license = $licenseDao->getLicenseById($licenseId);
+      $licenseObj = new License(
+        $license->getId(),
+        $license->getShortName(),
+        $license->getFullName(),
+        $license->getText(),
+        $license->getUrl(),
+        $obligationList,
+        $license->getRisk()
+      );
+      $licenses[] = $licenseObj->getArray();
+    }
+    return $response->withJson($licenses, 200);
+  }
+
+  /**
+   * Set the main license for the upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function setMainLicense($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+    $body = $this->getParsedBody($request);
+    $shortName = $body['shortName'];
+    $returnVal = null;
+    $license = null;
+    $licenseDao = $this->container->get('dao.license');
+    $clearingDao = $this->container->get('dao.clearing');
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+    } else if (empty($shortName)) {
+      $returnVal = new Info(400, "Short name missing from request.",
+        InfoType::ERROR);
+    } else {
+      $license = $licenseDao->getLicenseByShortName($shortName,
+        $this->restHelper->getGroupId());
+
+      if ($license === null) {
+        $returnVal = new Info(404, "No license with shortname '$shortName' found.",
+          InfoType::ERROR);
+      } else {
+        $licenseIds = $clearingDao->getMainLicenseIds($uploadId, $this->restHelper->getGroupId());
+        if (in_array($license->getId(), $licenseIds)) {
+          $returnVal = new Info(400, "License already exists for this upload.",
+            InfoType::ERROR);
+        }
+      }
+    }
+    if ($returnVal !== null) {
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+    $clearingDao = $this->container->get('dao.clearing');
+    $clearingDao->makeMainLicense($uploadId, $this->restHelper->getGroupId(), $license->getId());
+    $returnVal = new Info(200, "Successfully added new main license", InfoType::INFO);
+    return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+  }
+
+  /***
+   * Remove the main license from the upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function removeMainLicense($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+    $shortName = $args['shortName'];
+    $returnVal = null;
+    $licenseDao = $this->container->get('dao.license');
+    $clearingDao = $this->container->get('dao.clearing');
+    $license = $licenseDao->getLicenseByShortName($shortName, $this->restHelper->getGroupId());
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+    } else if ($license === null) {
+      $returnVal = new Info(404, "No license with shortname '$shortName' found.",
+        InfoType::ERROR);
+    } else {
+      $licenseIds = $clearingDao->getMainLicenseIds($uploadId, $this->restHelper->getGroupId());
+      if (!in_array($license->getId(), $licenseIds)) {
+        $returnVal = new Info(400, "License '$shortName' is not a main license for this upload.",
+          InfoType::ERROR);
+      }
+    }
+    if ($returnVal !== null) {
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+    $clearingDao = $this->container->get('dao.clearing');
+    $clearingDao->removeMainLicense($uploadId, $this->restHelper->getGroupId(), $license->getId());
+    $returnVal = new Info(200, "Main license removed successfully.", InfoType::INFO);
+
+    return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+  }
+
+  /**
+   * Get the clearing progress info of the upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getClearingProgressInfo($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+    $uploadDao = $this->restHelper->getUploadDao();
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    $uploadTreeTableName = $uploadDao->getUploadtreeTableName($uploadId);
+
+    $noLicenseUploadTreeView = new UploadTreeProxy($uploadId,
+      array(UploadTreeProxy::OPT_SKIP_THESE => "noLicense",
+        UploadTreeProxy::OPT_GROUP_ID => $this->restHelper->getGroupId()),
+      $uploadTreeTableName,
+      'no_license_uploadtree' . $uploadId);
+
+    $filesOfInterest = $noLicenseUploadTreeView->count();
+
+    $nonClearedUploadTreeView = new UploadTreeProxy($uploadId,
+      array(UploadTreeProxy::OPT_SKIP_THESE => "alreadyCleared",
+        UploadTreeProxy::OPT_GROUP_ID =>  $this->restHelper->getGroupId()),
+      $uploadTreeTableName,
+      'already_cleared_uploadtree' . $uploadId);
+    $filesToBeCleared = $nonClearedUploadTreeView->count();
+
+    $filesAlreadyCleared = $filesOfInterest - $filesToBeCleared;
+
+    $res = [
+      "totalFilesOfInterest" => intval($filesOfInterest),
+      "totalFilesCleared" => intval($filesAlreadyCleared),
+    ];
+    return $response->withJson($res, 200);
+  }
+
+  /**
+   * Get all licenses histogram for the entire upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getLicensesHistogram($request, $response, $args)
+  {
+    $agentDao = $this->container->get('dao.agent');
+    $clearingDao = $this->container->get('dao.clearing');
+    $licenseDao = $this->container->get('dao.license');
+
+    $uploadId = intval($args['id']);
+    $uploadDao = $this->restHelper->getUploadDao();
+    $query = $request->getQueryParams();
+    $selectedAgentId = $query['agentId'];
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist.", InfoType::ERROR);
+    } else if ($selectedAgentId !== null && !$this->dbHelper->doesIdExist("agent", "agent_pk", $selectedAgentId)) {
+      $returnVal = new Info(404, "Agent does not exist.", InfoType::ERROR);
+    }
+    if (isset($returnVal)) {
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    $scannerAgents = array_keys($this->agentNames);
+    $scanJobProxy = new ScanJobProxy($agentDao, $uploadId);
+    $scanJobProxy->createAgentStatus($scannerAgents);
+    $uploadTreeTableName = $uploadDao->getUploadtreeTableName($uploadId);
+    $itemTreeBounds = $uploadDao->getParentItemBounds($uploadId, $uploadTreeTableName);
+    $editedLicenses = $clearingDao->getClearedLicenseIdAndMultiplicities($itemTreeBounds, $this->restHelper->getGroupId());
+    $selectedAgentIds = empty($selectedAgentId) ? $scanJobProxy->getLatestSuccessfulAgentIds() : $selectedAgentId;
+    $scannedLicenses = $licenseDao->getLicenseHistogram($itemTreeBounds, $selectedAgentIds);
+    $allScannerLicenseNames = array_keys($scannedLicenses);
+    $allEditedLicenseNames = array_keys($editedLicenses);
+    $allLicNames = array_unique(array_merge($allScannerLicenseNames, $allEditedLicenseNames));
+    $realLicNames = array_diff($allLicNames, array(LicenseDao::NO_LICENSE_FOUND));
+    $totalScannerLicenseCount = 0;
+    $editedTotalLicenseCount = 0;
+
+    $res = array();
+    foreach ($realLicNames as $licenseShortName) {
+      $count = 0;
+      if (array_key_exists($licenseShortName, $scannedLicenses)) {
+        $count = $scannedLicenses[$licenseShortName]['unique'];
+        $rfId = $scannedLicenses[$licenseShortName]['rf_pk'];
+      } else {
+        $rfId = $editedLicenses[$licenseShortName]['rf_pk'];
+      }
+      $editedCount = array_key_exists($licenseShortName, $editedLicenses) ? $editedLicenses[$licenseShortName]['count'] : 0;
+      $totalScannerLicenseCount += $count;
+      $editedTotalLicenseCount += $editedCount;
+      $scannerCountLink = $count;
+      $editedLink = $editedCount;
+
+      $res[] = array($scannerCountLink, $editedLink, array($licenseShortName, $rfId));
+    }
+
+    $outputArray = [];
+
+    foreach ($res as $item) {
+      $outputArray[] = [
+        "id" => intval($item[2][1]),
+        "name" => $item[2][0],
+        "scannerCount" => intval($item[0]),
+        "concludedCount" => intval($item[1]),
+      ];
+    }
+    return $response->withJson($outputArray, 200);
+  }
+  /**
+   * Get all the groups with their respective permissions for a upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getAllAgents($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    $scannerAgents = array_keys($this->agentNames);
+    $agentDao = $this->container->get('dao.agent');
+    $scanJobProxy = new ScanJobProxy($agentDao, $uploadId);
+    $res = $scanJobProxy->createAgentStatus($scannerAgents);
+
+    foreach ($res as &$item) {
+      if (count($item['successfulAgents']) > 0) {
+        $item['isAgentRunning'] = false;
+      } else {
+        $item['currentAgentId'] = $agentDao->getCurrentAgentRef($item["agentName"])->getAgentId();
+        $item['currentAgentRev'] = "";
+      }
+      foreach ($item['successfulAgents'] as &$agent) {
+        $agent['agent_id'] = intval($agent['agent_id']);
+      }
+    }
+    return $response->withJson($res, 200);
+  }
+
+  /**
+   * Get all edited licenses for the entire upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getEditedLicenses($request, $response, $args)
+  {
+    $clearingDao = $this->container->get('dao.clearing');
+    $licenseDao = $this->container->get('dao.license');
+
+    $uploadId = intval($args['id']);
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+    $uploadDao = $this->restHelper->getUploadDao();
+    $uploadTreeTableName = $uploadDao->getUploadtreeTableName($uploadId);
+    $itemTreeBounds = $uploadDao->getParentItemBounds($uploadId, $uploadTreeTableName);
+    $res = $clearingDao->getClearedLicenseIdAndMultiplicities($itemTreeBounds, $this->restHelper->getGroupId());
+    $outputArray = [];
+
+    foreach ($res as $key => $value) {
+      $outputArray[] = [
+        "id" => intval($value["rf_pk"]),
+        "shortName" => $key,
+        "count" =>intval($value["count"]),
+        "spdx_id" => $value["spdx_id"],
+      ];
+    }
+    return $response->withJson($outputArray, 200);
+  }
+
+  /**
+   * Get Reuse report summary for the upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getReuseReportSummary($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+
+    $reuseReportProcess = $this->container->get('businessrules.reusereportprocessor');
+    $res = $reuseReportProcess->getReuseSummary($uploadId);
+    return $response->withJson($res, 200);
+  }
+
+  /**
+   * Get all scanned licenses for the entire upload
+   *
+   * @param ServerRequestInterface $request
+   * @param ResponseHelper $response
+   * @param array $args
+   * @return ResponseHelper
+   */
+  public function getScannedLicenses($request, $response, $args)
+  {
+    $uploadId = intval($args['id']);
+    $query = $request->getQueryParams();
+    $selectedAgentId = $query['agentId'];
+    $licenseDao = $this->container->get('dao.license');
+
+    if (!$this->dbHelper->doesIdExist("upload", "upload_pk", $uploadId)) {
+      $returnVal = new Info(404, "Upload does not exist", InfoType::ERROR);
+    } else if ($selectedAgentId !== null && !$this->dbHelper->doesIdExist("agent", "agent_pk", $selectedAgentId)) {
+      $returnVal = new Info(404, "Agent does not exist", InfoType::ERROR);
+    }
+    if (isset($returnVal)) {
+      return $response->withJson($returnVal->getArray(), $returnVal->getCode());
+    }
+    $scannerAgents = array_keys(AgentRef::AGENT_LIST);
+    $scanJobProxy = new ScanJobProxy($this->agentDao, $uploadId);
+    $scanJobProxy->createAgentStatus($scannerAgents);
+    $uploadDao = $this->restHelper->getUploadDao();
+    $uploadTreeTableName = $uploadDao->getUploadtreeTableName($uploadId);
+    $itemTreeBounds = $uploadDao->getParentItemBounds($uploadId, $uploadTreeTableName);
+    $selectedAgentIds = empty($selectedAgentId) ? $scanJobProxy->getLatestSuccessfulAgentIds() : $selectedAgentId;
+    $res = $licenseDao->getLicenseHistogram($itemTreeBounds, $selectedAgentIds);
+    $outputArray = [];
+
+    foreach ($res as $key => $value) {
+      $scannedLicense = new ScannedLicense($licenseDao->getLicenseByShortName($key)->getId(), $key, $value['count'], $value['unique'], $value['spdx_id']);
+      $outputArray[] = $scannedLicense->getArray();
+    }
+    return $response->withJson($outputArray, 200);
   }
 }

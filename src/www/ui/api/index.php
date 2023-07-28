@@ -27,12 +27,15 @@ use Fossology\UI\Api\Controllers\FileSearchController;
 use Fossology\UI\Api\Controllers\FolderController;
 use Fossology\UI\Api\Controllers\GroupController;
 use Fossology\UI\Api\Controllers\InfoController;
+use Fossology\UI\Api\Controllers\FileInfoController;
 use Fossology\UI\Api\Controllers\JobController;
+use Fossology\UI\Api\Controllers\CopyrightController;
 use Fossology\UI\Api\Controllers\LicenseController;
 use Fossology\UI\Api\Controllers\MaintenanceController;
 use Fossology\UI\Api\Controllers\ReportController;
 use Fossology\UI\Api\Controllers\SearchController;
 use Fossology\UI\Api\Controllers\UploadController;
+use Fossology\UI\Api\Controllers\UploadTreeController;
 use Fossology\UI\Api\Controllers\UserController;
 use Fossology\UI\Api\Helper\ResponseFactoryHelper;
 use Fossology\UI\Api\Helper\ResponseHelper;
@@ -147,10 +150,34 @@ $app->group('/uploads',
     $app->get('/{id:\\d+}/perm-groups', UploadController::class . ':getGroupsWithPermissions');
     $app->get('/{id:\\d+}/summary', UploadController::class . ':getUploadSummary');
     $app->get('/{id:\\d+}/licenses', UploadController::class . ':getUploadLicenses');
+    $app->get('/{id:\\d+}/licenses/histogram', UploadController::class . ':getLicensesHistogram');
+    $app->get('/{id:\\d+}/agents', UploadController::class . ':getAllAgents');
+    $app->get('/{id:\\d+}/licenses/edited', UploadController::class . ':getEditedLicenses');
+    $app->get('/{id:\\d+}/licenses/reuse', UploadController::class . ':getReuseReportSummary');
+    $app->get('/{id:\\d+}/licenses/scanned', UploadController::class . ':getScannedLicenses');
     $app->get('/{id:\\d+}/download', UploadController::class . ':uploadDownload');
     $app->get('/{id:\\d+}/copyrights', UploadController::class . ':getUploadCopyrights');
+    $app->get('/{id:\\d+}/clearing-progress', UploadController::class . ':getClearingProgressInfo');
+    $app->get('/{id:\\d+}/licenses/main', UploadController::class . ':getMainLicenses');
+    $app->post('/{id:\\d+}/licenses/main', UploadController::class . ':setMainLicense');
+    $app->delete('/{id:\\d+}/licenses/{shortName:[\\w\\- \\.]+}/main', UploadController::class . ':removeMainLicense');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/view', UploadTreeController::class. ':viewLicenseFile');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/prev-next', UploadTreeController::class . ':getNextPreviousItem');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/licenses', UploadTreeController::class . ':getLicenseDecisions');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/copyrights', CopyrightController::class . ':getFileCopyrights');
+    $app->delete('/{id:\\d+}/item/{itemId:\\d+}/copyrights/{hash:.*}', CopyrightController::class . ':deleteFileCopyrights');
+    $app->put('/{id:\\d+}/item/{itemId:\\d+}/copyrights/{hash:.*}', CopyrightController::class . ':updateFileCopyrights');
+    $app->put('/{id:\\d+}/item/{itemId}/clearing-decision', UploadTreeController::class . ':setClearingDecision');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/bulk-history', UploadTreeController::class . ':getBulkHistory');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/clearing-history', UploadTreeController::class . ':getClearingHistory');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/highlight', UploadTreeController::class . ':getHighlightEntries');
+    $app->patch('/{id:\\d+}/item/{itemId:\\d+}/copyrights/{hash:.*}', CopyrightController::class . ':restoreFileCopyrights');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/totalcopyrights', CopyrightController::class . ':getTotalFileCopyrights');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/tree/view', UploadTreeController::class . ':getTreeView');
+    $app->get('/{id:\\d+}/item/{itemId:\\d+}/info', FileInfoController::class . ':getItemInfo');
     $app->any('/{params:.*}', BadRequestController::class);
   });
+
 
 ////////////////////////////ADMIN-USERS/////////////////////
 $app->group('/users',
@@ -186,6 +213,7 @@ $app->group('/jobs',
     $app->get('/all', JobController::class . ':getAllJobs');
     $app->post('', JobController::class . ':createJob');
     $app->get('/history', JobController::class . ':getJobsHistory');
+    $app->delete('/{id:\\d+}/{queue:\\d+}', JobController::class . ':deleteJob');
     $app->any('/{params:.*}', BadRequestController::class);
   });
 
@@ -236,6 +264,10 @@ $app->group('/health',
   function (\Slim\Routing\RouteCollectorProxy $app) {
     $app->get('', InfoController::class . ':getHealth');
   });
+$app->group('/openapi',
+  function (\Slim\Routing\RouteCollectorProxy $app) {
+    $app->get('', InfoController::class . ':getOpenApi');
+  });
 
 /////////////////////////FILE SEARCH////////////////////
 $app->group('/filesearch',
@@ -251,6 +283,7 @@ $app->group('/license',
     $app->post('/import-csv', LicenseController::class . ':handleImportLicense');
     $app->post('', LicenseController::class . ':createLicense');
     $app->get('/admincandidates', LicenseController::class . ':getCandidates');
+    $app->get('/adminacknowledgements', LicenseController::class . ':getAllAdminAcknowledgements');
     $app->get('/{shortname:.+}', LicenseController::class . ':getLicense');
     $app->patch('/{shortname:.+}', LicenseController::class . ':updateLicense');
     $app->delete('/admincandidates/{id:\\d+}',

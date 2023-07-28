@@ -98,7 +98,7 @@ class ClearingView extends FO_Plugin
    * @param int $uploadId
    * @return Highlight[]
    */
-  private function getSelectedHighlighting(ItemTreeBounds $itemTreeBounds, $licenseId, $selectedAgentId, $highlightId, $clearingId, $uploadId)
+  public function getSelectedHighlighting(ItemTreeBounds $itemTreeBounds, $licenseId, $selectedAgentId, $highlightId, $clearingId, $uploadId)
   {
     $unmaskAgents = $selectedAgentId;
     if (empty($selectedAgentId)) {
@@ -344,7 +344,7 @@ class ClearingView extends FO_Plugin
    * @param int $lastItem
    * @return array
    */
-  protected function updateLastItem($userId, $groupId, $lastItem, $currentUploadtreeId)
+  public function updateLastItem($userId, $groupId, $lastItem, $currentUploadtreeId)
   {
     $type = GetParm("clearingTypes", PARM_INTEGER);
     $global = GetParm("globalDecision", PARM_STRING) === "on" ? 1 : 0;
